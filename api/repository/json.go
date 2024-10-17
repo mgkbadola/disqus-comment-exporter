@@ -48,11 +48,19 @@ type CommentApiResponse struct {
 	Response []Comment `json:"response"`
 }
 
-type Thread struct {
-	Link string `json:"link"`
+type Page struct {
+	Link      string     `json:"link"`
+	Forum     string     `json:"forum"`
+	Message   string     `json:"message"`
+	Category  string     `json:"category"`
+	CreatedAt CustomTime `json:"createdAt"`
+	AuthorId  string     `json:"author"`
+	Title     string     `json:"title"`
+	IsClosed  bool       `json:"isClosed"`
+	IsDeleted bool       `json:"isDeleted"`
 }
 
-type ThreadApiResponse struct {
-	Code     int    `json:"code"`
-	Response Thread `json:"response"`
+type DetailsResponse[T any] struct {
+	Code     int `json:"code"`
+	Response T   `json:"response"`
 }
