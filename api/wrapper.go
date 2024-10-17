@@ -40,14 +40,14 @@ func NewDisqusAPIWrapper(config Config) *DisqusAPIWrapper {
 }
 
 func (w *DisqusAPIWrapper) BeginCommentExport() {
-	exportedParent, err := w.FetchComments("")
+	exportedParent, err := w.FetchComments("", true)
 	if err != nil {
 		log.Printf("%+v", err)
 	}
 	nextCursor := exportedParent.Cursor.Next
 	w.comments = append(w.comments, exportedParent.Response...)
 	for more := exportedParent.Cursor.More; more; more = exportedParent.Cursor.More {
-		exportedParent, err = w.FetchComments(nextCursor)
+		exportedParent, err = w.FetchComments(nextCursor, true)
 		if err != nil {
 			log.Printf("%+v", err)
 		}
@@ -70,8 +70,7 @@ func (w *DisqusAPIWrapper) BeginCommentExport() {
 		}
 		post := repository.Post{
 			UID:            comment.ID,
-			ID:             comment.ID,
-			Message:        comment.Message,
+			Message:        repository.CDATAString{Val: comment.Message},
 			CreatedAt:      comment.CreatedAt.Time,
 			AuthorName:     comment.Author.Name,
 			AuthorUserName: comment.Author.Username,
@@ -82,62 +81,76 @@ func (w *DisqusAPIWrapper) BeginCommentExport() {
 		}
 		posts = append(posts, post)
 	}
-	const (
-		Header = `<?xml version="1.0" encoding="UTF-8"?>` + "\n"
-	)
-	out, err := xml.Marshal(posts)
-	if err != nil {
-		log.Printf("")
+
+	d := repository.DisqusExport{
+		XMLNS:          "http://disqus.com",
+		Dsq:            "http://disqus.com/disqus-internals",
+		Xsi:            "http://www.w3.org/2001/XMLSchema-instance",
+		SchemaLocation: "http://disqus.com/api/schemas/1.0/disqus.xsd http://disqus.com/api/schemas/1.0/disqus-internals.xsd",
+		Posts:          posts,
 	}
-	fmt.Printf(string(out))
+	out, err := xml.MarshalIndent(d, "", "	")
+	if err != nil {
+		log.Println("%+v", err)
+	}
+	fmt.Println(xml.Header + string(out))
 }
 
-func (w *DisqusAPIWrapper) FetchComments(cursor string) (repository.CommentApiResponse, error) {
+func (w *DisqusAPIWrapper) FetchComments(cursor string, isDemo bool) (repository.CommentApiResponse, error) {
 	//convert from JSON to XML
 	if w.requestsAvailable == 0 && time.Now().Unix() < w.resetUnix {
+		//TODO
 		//we have to wait for cooldown
 		//add condition to pause based on time left
 	}
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/posts/list.json", w.baseUrl), nil)
-	if err != nil {
-		return repository.CommentApiResponse{}, err
+	var r io.Reader
+	if !isDemo {
+		client := &http.Client{}
+		req, err := http.NewRequest("GET", fmt.Sprintf("%s/posts/list.json", w.baseUrl), nil)
+		if err != nil {
+			return repository.CommentApiResponse{}, err
+		}
+		q := req.URL.Query()
+		q.Add("api_key", w.config.APIKey)
+		q.Add("forum", w.config.Forum)
+		q.Add("limit", strconv.Itoa(int(w.config.FetchLimit)))
+		//TODO remove when final
+		q.Add("start", "1729056409")
+		if cursor != "" {
+			q.Add("cursor", cursor)
+		}
+		req.URL.RawQuery = q.Encode()
+		req.Header.Set("Accept", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return repository.CommentApiResponse{}, err
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return repository.CommentApiResponse{}, err
+		}
+		//TODO ratelimiting
+		//requestsAvailable, err := strconv.ParseInt(resp.Header.Get("X-Ratelimit-Remaining"), 10, 16)
+		//if err != nil {
+		//	fmt.Printf("REQ")
+		//	return repository.CommentApiResponse{}, err
+		//}
+		//resetUnix, err := strconv.ParseInt(resp.Header.Get("X-Ratelimit-Reset"), 10, 64)
+		//if err != nil {
+		//	fmt.Printf("LIM")
+		//	return repository.CommentApiResponse{}, err
+		//}
+		//w.requestsAvailable = int16(requestsAvailable)
+		//w.resetUnix = resetUnix
+		r = strings.NewReader(string(body))
+	} else {
+		str := "YOUR JSON STRING HERE"
+		r = strings.NewReader(str)
 	}
-	q := req.URL.Query()
-	q.Add("api_key", w.config.APIKey)
-	q.Add("forum", w.config.Forum)
-	q.Add("limit", strconv.Itoa(int(w.config.FetchLimit)))
-	q.Add("start", "1729056409")
-	if cursor != "" {
-		q.Add("cursor", cursor)
-	}
-	req.URL.RawQuery = q.Encode()
-	req.Header.Set("Accept", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return repository.CommentApiResponse{}, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return repository.CommentApiResponse{}, err
-	}
-	//requestsAvailable, err := strconv.ParseInt(resp.Header.Get("X-Ratelimit-Remaining"), 10, 16)
-	//if err != nil {
-	//	fmt.Printf("REQ")
-	//	return repository.CommentApiResponse{}, err
-	//}
-	//resetUnix, err := strconv.ParseInt(resp.Header.Get("X-Ratelimit-Reset"), 10, 64)
-	//if err != nil {
-	//	fmt.Printf("LIM")
-	//	return repository.CommentApiResponse{}, err
-	//}
-	//w.requestsAvailable = int16(requestsAvailable)
-	//w.resetUnix = resetUnix
-	r := strings.NewReader(string(body))
 	decoder := json.NewDecoder(r)
 	var exportedParent repository.CommentApiResponse
-	err = decoder.Decode(&exportedParent)
+	err := decoder.Decode(&exportedParent)
 	if err != nil {
 		return repository.CommentApiResponse{}, err
 	}

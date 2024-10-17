@@ -32,7 +32,7 @@ type Author struct {
 type Comment struct {
 	Dislikes  int        `json:"dislikes"`
 	Likes     int        `json:"likes"`
-	Message   string     `json:"raw_message"`
+	Message   string     `json:"message"`
 	IsSpam    bool       `json:"isSpam"`
 	Author    Author     `json:"author"`
 	ID        string     `json:"id"`
